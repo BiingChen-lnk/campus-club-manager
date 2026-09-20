@@ -1,0 +1,24 @@
+[Unit]
+Description=DBxm club management web application
+After=network.target mysql.service
+Requires=mysql.service
+
+[Service]
+Type=simple
+User=dbxm
+Group=dbxm
+WorkingDirectory=/opt/dbxm/current
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Asia/Shanghai
+ExecStart=/opt/dbxm/venv/bin/gunicorn --bind 127.0.0.1:8000 --workers 1 --threads 4 --worker-class gthread --timeout 90 --graceful-timeout 30 --access-logfile - --error-logfile - wsgi:app
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/dbxm/shared/instance
+
+[Install]
+WantedBy=multi-user.target

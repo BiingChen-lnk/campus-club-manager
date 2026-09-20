@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}社团工作台{% endblock %} · 社团管理</title><link rel="stylesheet" href="{{ url_for('static',filename='app.css') }}"><script defer src="{{ url_for('static',filename='app.js') }}"></script></head>
+{% macro csrf() %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endmacro %}
+{% macro badge(value) %}<span class="badge {{ value }}">{{ value|status }}</span>{% endmacro %}
+{% macro state_form(a,action,label) %}<form method="post" action="{{ url_for('activities.state',aid=a.id) }}">{{ csrf() }}<input type="hidden" name="action" value="{{ action }}"><button class="secondary">{{ label }}</button></form>{% endmacro %}
+<body>{% if g.user %}<aside class="sidebar"><a class="brand" href="/">社团簿<span>CLUB WORKSPACE</span></a><nav>
+{% for href,label,icon in [('/','工作台','◈'),('/clubs','社团与成员','▦'),('/recruitment','招新问卷','▤'),('/activities','活动管理','◷'),('/finance','经费管理','￥'),('/reports','数据统计','▥'),('/ai','AI 助手','✦'),('/notifications','站内通知','○'),('/audit','操作日志','≡')] %}<a class="{{ 'active' if (request.path==href or (href!='/' and request.path.startswith(href))) else '' }}" href="{{ href }}"><span>{{ icon }}</span>{{ label }}{% if href=='/notifications' and unread %}<b>{{ unread }}</b>{% endif %}</a>{% endfor %}</nav><div class="sidebar-foot">数据库课程项目<br>社团活动与经费管理</div></aside>{% endif %}
+<div class="shell {{ 'auth-shell' if not g.user else '' }}"><header class="topbar"><span>把社团的每件小事，记录清楚。</span>{% if g.user %}<div class="userbar"><a href="{{ url_for('auth.profile') }}">{{ g.user.name }} · {{ '管理员' if is_admin() else '用户' }}</a><form action="{{ url_for('auth.logout') }}" method="post">{{ csrf() }}<button class="link">退出</button></form></div>{% else %}<a href="/login">社团簿</a>{% endif %}</header><main>
+{% for category,message in get_flashed_messages(with_categories=true) %}<div class="alert {{ category }}" role="status">{{ message }}</div>{% endfor %}
+{% block content %}{% endblock %}</main><footer>社团簿 · 让活动有序，让经费清楚</footer></div></body></html>

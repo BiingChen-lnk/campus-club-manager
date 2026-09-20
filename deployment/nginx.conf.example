@@ -1,0 +1,44 @@
+server {
+    listen 80;
+    server_name club.example.com 192.0.2.10;
+    server_tokens off;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
+    location / { return 301 https://club.example.com$request_uri; }
+}
+
+server {
+    listen 443 ssl;
+    server_name club.example.com;
+    ssl_certificate /etc/letsencrypt/live/club.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/club.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:dbxm_ssl:1m;
+    client_max_body_size 10m;
+    server_tokens off;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy same-origin always;
+    limit_req_status 429;
+
+    location ^~ /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
+    location ~ /\. { deny all; }
+    location /static/ {
+        alias /opt/dbxm/current/clubapp/static/;
+        expires 1h;
+    }
+    location = /login {
+        limit_req zone=dbxm_auth burst=10 nodelay;
+        include /etc/nginx/snippets/dbxm-proxy.conf;
+    }
+    location = /register {
+        limit_req zone=dbxm_auth burst=10 nodelay;
+        include /etc/nginx/snippets/dbxm-proxy.conf;
+    }
+    location = /ai/generate {
+        limit_req zone=dbxm_ai burst=3 nodelay;
+        include /etc/nginx/snippets/dbxm-proxy.conf;
+    }
+    location / {
+        include /etc/nginx/snippets/dbxm-proxy.conf;
+    }
+}
