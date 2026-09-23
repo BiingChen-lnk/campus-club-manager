@@ -1,0 +1,12 @@
+{% macro render_question(q) %}
+<div class="question-item">
+  <label><strong>{{ q.position }}. {{ q.title }}{% if q.required %} <span aria-label="必填">*</span>{% endif %}</strong></label>
+  {% if q.description %}<p class="muted">{{ q.description }}</p>{% endif %}
+  {% if q.kind=='short' %}<input name="q_{{ q.id }}" maxlength="255" {{ 'required' if q.required }}>
+  {% elif q.kind=='long' %}<textarea name="q_{{ q.id }}" rows="4" maxlength="2000" {{ 'required' if q.required }}></textarea>
+  {% elif q.kind=='number' %}<input name="q_{{ q.id }}" type="number" step="any" {{ 'required' if q.required }}>
+  {% elif q.kind=='date' %}<input name="q_{{ q.id }}" type="date" {{ 'required' if q.required }}>
+  {% elif q.kind=='select' %}<select name="q_{{ q.id }}" {{ 'required' if q.required }}><option value="">请选择</option>{% for o in q.options %}<option value="{{ o.id }}">{{ o.label }}</option>{% endfor %}</select>
+  {% else %}<div class="choices">{% for o in q.options %}<label><input type="{{ 'radio' if q.kind=='single' else 'checkbox' }}" name="q_{{ q.id }}" value="{{ o.id }}" {{ 'required' if q.required and q.kind=='single' }}>{{ o.label }}</label>{% endfor %}</div>{% endif %}
+</div>
+{% endmacro %}

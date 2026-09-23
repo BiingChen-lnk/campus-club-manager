@@ -1,0 +1,23 @@
+{% extends 'base.html' %}{% block title %}编辑招新问卷{% endblock %}
+{% block content %}
+<div class="page-head"><div><span class="eyebrow">{{ batch.club_name }}</span><h1>编辑招新问卷</h1><p>{{ batch.title }} · {{ batch.status|status }}</p></div><a class="button secondary" href="{{ url_for('recruitment.batch',bid=batch.id) }}">预览问卷 →</a></div>
+<section class="panel"><p>姓名、学号等基本资料会从学生账号带入；选择意向部门后填写下列自定义题目。最多 30 题，每道选择题最多 30 个选项。</p><p>发布后题目和选项会锁定，已提交的答卷仍按发布时的题目显示。</p>
+{% if batch.status=='draft' %}<form method="post" action="{{ url_for('custom.publish',bid=batch.id) }}">{{ csrf() }}<button {{ 'disabled' if not questions }}>发布问卷</button>{% if not questions %}<small>请先添加至少一道题。</small>{% endif %}</form>{% else %}<a href="{{ url_for('custom.results',bid=batch.id) }}">查看答卷统计与导出 →</a>{% endif %}</section>
+{% for q in questions %}
+<section class="panel"><div class="section-head"><h2>{{ loop.index }}. {{ q.title }}</h2><span>{{ kinds[q.kind] }} · {{ '必填' if q.required else '选填' }}</span></div>
+{% if batch.status=='draft' %}<form method="post" action="{{ url_for('custom.save_question',bid=batch.id,qid=q.id) }}">{{ csrf() }}
+<label>题目<input name="title" value="{{ q.title }}" required maxlength="120"></label>
+<label>说明（选填）<input name="description" value="{{ q.description }}" maxlength="500"></label>
+<label>题型<select class="question-kind" name="kind">{% for key,label in kinds.items() %}<option value="{{ key }}" {{ 'selected' if q.kind==key }}>{{ label }}</option>{% endfor %}</select></label>
+<label class="choice-options" {{ 'hidden' if q.kind not in choices }}>选项（每行一个，至少 2 个）<textarea name="options" rows="5">{% for o in q.options %}{{ o.label }}{% if not loop.last %}&#10;{% endif %}{% endfor %}</textarea></label>
+<label class="check"><input name="required" type="checkbox" {{ 'checked' if q.required }}>必填</label><button>保存题目</button></form>
+<div class="actions"><form method="post" action="{{ url_for('custom.move_question',bid=batch.id,qid=q.id) }}">{{ csrf() }}<button class="secondary" name="direction" value="up" {{ 'disabled' if loop.first }}>上移</button><button class="secondary" name="direction" value="down" {{ 'disabled' if loop.last }}>下移</button></form><form method="post" action="{{ url_for('custom.delete_question',bid=batch.id,qid=q.id) }}" data-confirm="确定删除这道题？">{{ csrf() }}<button class="secondary">删除题目</button></form></div>
+{% else %}<p class="muted">问卷已发布，题目不可修改。</p>{% endif %}
+</section>
+{% endfor %}
+{% if batch.status=='draft' %}<section class="panel"><h2>＋ 添加题目</h2><form method="post" action="{{ url_for('custom.save_question',bid=batch.id,qid=0) }}">{{ csrf() }}
+<label>题目<input name="title" required maxlength="120" placeholder="例如：你想参加哪些类型的活动？"></label><label>说明（选填）<input name="description" maxlength="500"></label>
+<label>题型<select class="question-kind" name="kind">{% for key,label in kinds.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></label>
+<label class="choice-options" hidden>选项（每行一个，至少 2 个）<textarea name="options" rows="5" placeholder="选项一&#10;选项二"></textarea></label>
+<label class="check"><input name="required" type="checkbox" checked>必填</label><button {{ 'disabled' if questions|length>=30 }}>添加题目</button></form></section>{% endif %}
+{% endblock %}

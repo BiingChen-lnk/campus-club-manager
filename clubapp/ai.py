@@ -6,6 +6,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, g, fla
 from .db import rows, one, execute, get_db, audit
 from .common import login_required, manage_required, field, ValidationError
 from .recruitment import get_application
+from .custom import is_custom, answers_for_application
 from .activities import get_activity
 
 bp=Blueprint('ai',__name__)
@@ -43,7 +44,11 @@ def generate():
         # Applicants authorize sending only their textual answers; managers may review stored results.
         if a['user_id']!=g.user['id']:abort(403)
         cid=a['club_id'];target=url_for('recruitment.application',aid=aid)
-        data={k:a[k] for k in ('experience','reason','interests','skill_text')}
+        if is_custom(a['batch_id']):
+            lines=[f"{q['title']}：{q['answer']}" for q in answers_for_application(a['id'],a['batch_id']) if q['answer']]
+            data={'questionnaire_answers':'\n'.join(lines)[:20000]}
+        else:
+            data={k:a[k] for k in ('experience','reason','interests','skill_text')}
     elif kind in ('plan','review'):
         activity_id=request.form.get('activity_id');a=get_activity(activity_id);manage_required(a['club_id']);cid=a['club_id']
         target=url_for('activities.detail',aid=activity_id)

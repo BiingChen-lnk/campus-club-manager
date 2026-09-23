@@ -67,7 +67,7 @@ def create_app(config=None):
     for code,message in [(403,'你没有权限查看或操作这项资料。'),(404,'没有找到这项记录。'),(413,'文件太大，上传内容不能超过 10 MB。')]:
         app.register_error_handler(code,lambda error,code=code,message=message:(render_template('error.html',code=code,message=message),code))
 
-    from . import auth, main, recruitment, activities, finance, ai
-    for module in (auth,main,recruitment,activities,finance,ai):
+    from . import auth, main, recruitment, custom, activities, finance, ai
+    for module in (auth,main,recruitment,custom,activities,finance,ai):
         app.register_blueprint(module.bp)
     return app

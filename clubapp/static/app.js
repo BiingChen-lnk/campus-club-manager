@@ -1,3 +1,4 @@
 document.querySelectorAll('form[data-confirm]').forEach(form=>form.addEventListener('submit',e=>{if(!confirm(form.dataset.confirm))e.preventDefault()}));
 document.querySelectorAll('.ai-form').forEach(form=>form.addEventListener('submit',()=>{setTimeout(()=>{form.querySelectorAll('button').forEach(b=>{b.disabled=true;b.textContent='正在生成，请稍候…'})},0)}));
 document.querySelector('#add-budget')?.addEventListener('click',()=>{const box=document.querySelector('#budget-items');if(box.children.length>=30)return;const row=box.firstElementChild.cloneNode(true);row.querySelectorAll('input').forEach(i=>{i.value='';i.removeAttribute('required')});box.appendChild(row)});
+document.querySelectorAll('.question-kind').forEach(select=>{const update=()=>{const options=select.closest('form').querySelector('.choice-options');options.hidden=!['single','multiple','select'].includes(select.value)};select.addEventListener('change',update);update()});

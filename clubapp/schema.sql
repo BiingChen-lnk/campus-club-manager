@@ -204,3 +204,32 @@ CREATE TABLE IF NOT EXISTS audit_logs (
  FOREIGN KEY (actor_id) REFERENCES users(id),
  FOREIGN KEY (club_id) REFERENCES clubs(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- A marker keeps historical fixed questionnaires unchanged.
+CREATE TABLE IF NOT EXISTS batch_questionnaires (
+ batch_id INTEGER PRIMARY KEY, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY (batch_id) REFERENCES batches(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS questionnaire_questions (
+ id INTEGER PRIMARY KEY AUTO_INCREMENT, batch_id INTEGER NOT NULL,
+ position INTEGER NOT NULL, title VARCHAR(255) NOT NULL, description TEXT NOT NULL DEFAULT (''),
+ kind VARCHAR(20) NOT NULL CHECK(kind IN ('short','long','single','multiple','select','number','date')),
+ required INTEGER NOT NULL DEFAULT 1 CHECK(required IN (0,1)),
+ FOREIGN KEY (batch_id) REFERENCES batch_questionnaires(batch_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS questionnaire_options (
+ id INTEGER PRIMARY KEY AUTO_INCREMENT, question_id INTEGER NOT NULL,
+ position INTEGER NOT NULL, label VARCHAR(255) NOT NULL,
+ FOREIGN KEY (question_id) REFERENCES questionnaire_questions(id) ON DELETE CASCADE,
+ UNIQUE(question_id,label)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS questionnaire_answers (
+ id INTEGER PRIMARY KEY AUTO_INCREMENT, application_id INTEGER NOT NULL,
+ question_id INTEGER NOT NULL, answer_text TEXT NOT NULL,
+ UNIQUE(application_id,question_id),
+ FOREIGN KEY (application_id) REFERENCES applications(id),
+ FOREIGN KEY (question_id) REFERENCES questionnaire_questions(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

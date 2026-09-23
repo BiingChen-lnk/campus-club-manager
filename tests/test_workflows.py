@@ -236,7 +236,11 @@ def test_owner_controls_recruitment_and_old_pending_activities(app):
     fmt=lambda d:d.strftime('%Y-%m-%dT%H:%M')
     response=post(owner,'/recruitment/new',dict(club_id=1,title='负责人自主招新',description='无需管理员审批',starts_at=fmt(datetime.now()-timedelta(hours=1)),ends_at=fmt(datetime.now()+timedelta(days=3)),departments=['1']))
     assert response.status_code==302
-    bid=int(response.location.rsplit('/',1)[1])
+    bid=int(response.location.split('/')[2])
+    assert query(app,'SELECT status FROM batches WHERE id=%s',(bid,))['status']=='draft'
+    assert post(owner,f'/recruitment/{bid}/publish').status_code==400
+    assert post(owner,f'/recruitment/{bid}/questions/0',dict(title='加入原因',kind='long',required='on')).status_code==302
+    assert post(owner,f'/recruitment/{bid}/publish').status_code==302
     assert query(app,'SELECT status FROM batches WHERE id=%s',(bid,))['status']=='published'
     assert post(owner,f'/recruitment/{bid}/close').status_code==302
     with app.app_context():
@@ -244,3 +248,109 @@ def test_owner_controls_recruitment_and_old_pending_activities(app):
         get_db().commit()
     assert owner.get(f'/activities/{aid}/edit').status_code==200
     assert post(owner,f'/activities/{aid}/state',dict(action='publish')).status_code==302
+
+
+def test_custom_questionnaire_build_publish_answer_and_export(app):
+    import csv, io
+    owner=login(app)
+    fmt=lambda d:d.strftime('%Y-%m-%dT%H:%M')
+    result=post(owner,'/recruitment/new',dict(club_id=1,title='自定义招新测试',description='可自定义题目',
+        starts_at=fmt(datetime.now()-timedelta(hours=1)),ends_at=fmt(datetime.now()+timedelta(days=3)),departments=['1']))
+    assert result.status_code==302 and '/questions' in result.location
+    bid=int(result.location.split('/')[2])
+    assert query(app,'SELECT status FROM batches WHERE id=%s',(bid,))['status']=='draft'
+    assert query(app,'SELECT batch_id FROM batch_questionnaires WHERE batch_id=%s',(bid,))
+    assert post(owner,f'/recruitment/{bid}/publish').status_code==400
+    guest=app.test_client()
+    assert guest.get(f'/recruitment/{bid}').status_code==403
+    assert guest.get(f'/recruitment/{bid}/questions').status_code==302
+    admin=login(app,'admin','Admin123!')
+    assert admin.get(f'/recruitment/{bid}/questions').status_code==403
+    assert post(admin,f'/recruitment/{bid}/questions/0',dict(title='越权',kind='short')).status_code==403
+
+    definitions=[('short','会用什么语言？',None),('long','项目经历',None),('single','首选方向','开发\n设计'),
+                 ('multiple','感兴趣的活动','编程\n摄影\n讲座'),('select','可参加的部门','技术部\n宣传部'),
+                 ('number','每周可投入小时数',None),('date','预计开始日期',None)]
+    for kind,title,options in definitions:
+        data=dict(kind=kind,title=title,description='请按实际情况填写',required='on')
+        if options:data['options']=options
+        assert post(owner,f'/recruitment/{bid}/questions/0',data).status_code==302
+    questions=query(app,'SELECT COUNT(*) n FROM questionnaire_questions WHERE batch_id=%s',(bid,))
+    assert questions['n']==7
+    first=query(app,'SELECT id FROM questionnaire_questions WHERE batch_id=%s ORDER BY position LIMIT 1',(bid,))['id']
+    assert post(owner,f'/recruitment/{bid}/questions/{first}',dict(kind='short',title='掌握的语言',required='on')).status_code==302
+    assert post(owner,f'/recruitment/{bid}/questions/{first}/move',dict(direction='down')).status_code==302
+    assert query(app,'SELECT position FROM questionnaire_questions WHERE id=%s',(first,))['position']==2
+    assert post(owner,f'/recruitment/{bid}/questions/0',dict(kind='single',title='重复选项',options='相同\n相同')).status_code==400
+    assert post(owner,f'/recruitment/{bid}/questions/0',dict(kind='unknown',title='非法题型')).status_code==400
+    assert post(owner,f'/recruitment/{bid}/questions/0',dict(kind='short',title='临时题')).status_code==302
+    temporary=query(app,'SELECT MAX(id) id FROM questionnaire_questions WHERE batch_id=%s',(bid,))['id']
+    assert post(owner,f'/recruitment/{bid}/questions/{temporary}/delete').status_code==302
+    assert not query(app,'SELECT id FROM questionnaire_questions WHERE id=%s',(temporary,))
+    preview=owner.get(f'/recruitment/{bid}').get_data(as_text=True)
+    assert '问卷预览' in preview and '掌握的语言' in preview
+    assert post(owner,f'/recruitment/{bid}/publish').status_code==302
+    assert post(owner,f'/recruitment/{bid}/questions/{first}',dict(kind='short',title='发布后改题')).status_code==400
+    assert post(owner,f'/recruitment/{bid}/questions/{first}/delete').status_code==400
+    assert query(app,'SELECT title FROM questionnaire_questions WHERE id=%s',(first,))['title']=='掌握的语言'
+    assert guest.get(f'/recruitment/{bid}').status_code==200
+    applicant=login(app,'2025003')
+    questions=[]
+    with app.app_context():
+        from clubapp.custom import questions_for_batch
+        questions=questions_for_batch(bid)
+    option=query(app,'SELECT id FROM batch_options WHERE batch_id=%s',(bid,))['id']
+    payload={'option_id':str(option),'name':'申请学生','major':'计算机','grade':'2025','phone':'123'}
+    for q in questions:
+        values={'short':'=1+1','long':'使用 Python 完成课程项目','number':'12.5','date':'2026-10-01'}
+        if q['kind']=='multiple':payload[f"q_{q['id']}"]=[str(o['id']) for o in q['options'][:2]]
+        elif q['kind'] in ('single','select'):payload[f"q_{q['id']}"]=str(q['options'][0]['id'])
+        else:payload[f"q_{q['id']}"]=values[q['kind']]
+    missing={k:v for k,v in payload.items() if k!=f'q_{first}'}
+    assert post(applicant,f'/recruitment/{bid}',missing).status_code==400
+    assert not query(app,'SELECT id FROM applications WHERE batch_id=%s',(bid,))
+    invalid={**payload}
+    single=next(q for q in questions if q['kind']=='single')
+    invalid[f"q_{single['id']}"]='999999'
+    assert post(applicant,f'/recruitment/{bid}',invalid).status_code==400
+    invalid={**payload}
+    number=next(q for q in questions if q['kind']=='number')
+    invalid[f"q_{number['id']}"]='not a number'
+    assert post(applicant,f'/recruitment/{bid}',invalid).status_code==400
+    response=post(applicant,f'/recruitment/{bid}',payload)
+    assert response.status_code==302
+    aid=int(response.location.rsplit('/',1)[1])
+    assert query(app,'SELECT COUNT(*) n FROM questionnaire_answers WHERE application_id=%s',(aid,))['n']==7
+    detail=applicant.get(f'/applications/{aid}').get_data(as_text=True)
+    assert '掌握的语言' in detail and '使用 Python 完成课程项目' in detail
+    assert '编程、摄影' in detail
+    assert post(applicant,f'/recruitment/{bid}',payload).status_code==400
+    assert applicant.get(f'/recruitment/{bid}/results').status_code==403
+    assert admin.get(f'/recruitment/{bid}/results').status_code==403
+    results=owner.get(f'/recruitment/{bid}/results').get_data(as_text=True)
+    assert '已提交' in results or '作答 1 人' in results
+    csv_text=owner.get(f'/recruitment/{bid}/results?export=csv').get_data(as_text=True).lstrip('\ufeff')
+    records=list(csv.reader(io.StringIO(csv_text)))
+    assert len(records)==2 and '掌握的语言' in records[0]
+    assert "'=1+1" in records[1]
+    assert post(owner,f'/applications/{aid}/review',dict(decision='accepted')).status_code==302
+    assert query(app,'SELECT status FROM applications WHERE id=%s',(aid,))['status']=='accepted'
+
+
+def test_custom_questionnaire_ai_uses_saved_answers(app,monkeypatch):
+    import clubapp.ai as module
+    from clubapp.custom import answers_for_application
+    aid=query(app,"SELECT a.id,a.batch_id FROM applications a JOIN batch_questionnaires q ON q.batch_id=a.batch_id ORDER BY a.id DESC LIMIT 1")
+    assert aid
+    with app.app_context():
+        answers=answers_for_application(aid['id'],aid['batch_id'])
+    assert any(q['answer']=='使用 Python 完成课程项目' for q in answers)
+    monkeypatch.setattr(module,'configured',lambda:True)
+    def fake_model(kind,data):
+        assert kind=='recruit' and '使用 Python 完成课程项目' in data['questionnaire_answers']
+        assert 'student_no' not in data and 'phone' not in data
+        return '{"summary":"有项目经验","skills":[{"name":"Python","evidence":"使用 Python 完成课程项目"}]}'
+    monkeypatch.setattr(module,'ask_model',fake_model)
+    applicant=login(app,'2025003')
+    assert post(applicant,'/ai/generate',dict(kind='recruit',application_id=aid['id'],consent='on')).status_code==302
+    assert query(app,"SELECT COUNT(*) n FROM ai_records WHERE application_id=%s AND status='success'",(aid['id'],))['n']==1

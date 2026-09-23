@@ -1,0 +1,7 @@
+{% extends 'base.html' %}{% block title %}问卷统计{% endblock %}{% block content %}
+<div class="page-head"><div><span class="eyebrow">{{ batch.club_name }}</span><h1>{{ batch.title }} · 问卷统计</h1><p>已提交 {{ applications|length }} 份答卷</p></div><a class="button" href="{{ url_for('custom.results',bid=batch.id,export='csv') }}">导出 CSV</a></div>
+<section class="panel"><a href="{{ url_for('recruitment.batch',bid=batch.id) }}">返回问卷 →</a></section>
+{% for q in questions %}<section class="panel"><h2>{{ loop.index }}. {{ q.title }}</h2><p class="muted">作答 {{ q.answered }} 人{% if q.required %} · 必填{% endif %}</p>
+{% if q.options %}<div class="table-wrap"><table><thead><tr><th>选项</th><th>人数</th></tr></thead><tbody>{% for o in q.options %}<tr><td>{{ o.label }}</td><td>{{ q.counts[o.id] }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted">文字、数字和日期回答请在个人答卷或导出的 CSV 中查看。</p>{% endif %}</section>{% endfor %}
+<section class="panel"><h2>个人答卷</h2>{% for a in applications %}<a class="list-item" href="{{ url_for('recruitment.application',aid=a.id) }}"><strong>{{ a.name }} · {{ a.student_no }}</strong>{{ badge(a.status) }}</a>{% else %}<p class="muted">还没有人提交问卷。</p>{% endfor %}</section>
+{% endblock %}
