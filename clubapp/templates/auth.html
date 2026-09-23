@@ -1,1 +1,25 @@
-{% extends 'base.html' %}{% block title %}{{ '登录' if mode=='login' else '注册' }}{% endblock %}{% block content %}<div class="auth-layout"><section class="auth-intro"><span class="eyebrow">CAMPUS / COMMUNITY</span><h1>一起做点<br>有意思的事。</h1><p>从加入社团的第一份问卷，到活动结束后的每一笔记录。</p><div class="intro-chips"><span>招新</span><span>活动</span><span>经费</span></div></section><section class="panel auth-card"><h2>{{ '欢迎回来' if mode=='login' else '创建账号' }}</h2><p class="muted">{{ '使用学号登录社团工作台。' if mode=='login' else '注册后即可填写招新问卷，申请加入社团。' }}</p><form method="post">{{ csrf() }}<label>学号<input name="student_no" required maxlength="30" autocomplete="username"></label>{% if mode=='register' %}<label>姓名<input name="name" required maxlength="40"></label><div class="form-grid"><label>专业<input name="major" required></label><label>年级<input name="grade" required placeholder="如 2025 级"></label></div><label>联系方式<input name="phone" required></label>{% endif %}<label>密码<input type="password" name="password" required minlength="{{ 8 if mode=='register' else 1 }}" autocomplete="{{ 'new-password' if mode=='register' else 'current-password' }}"></label><button class="full">{{ '登录' if mode=='login' else '注册' }}</button></form><p class="muted">{% if mode=='login' %}还没有账号？<a href="/register">立即注册</a>{% else %}已有账号？<a href="/login">返回登录</a>{% endif %}</p></section></div>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}{{ '登录' if mode=='login' else '学生注册' }}{% endblock %}
+{% block content %}
+<div class="auth-layout">
+<section class="auth-intro"><span class="eyebrow">CAMPUS / COMMUNITY</span><h1>一起做点<br>有意思的事。</h1><p>从加入社团的第一份问卷，到活动结束后的每一笔记录。</p><div class="intro-chips"><span>招新</span><span>活动</span><span>经费</span></div></section>
+<section class="panel auth-card">
+<h2>{{ '欢迎回来' if mode=='login' else '学生注册' }}</h2>
+<p class="muted">{{ '使用学号或管理员账号登录。' if mode=='login' else '注册学生账号，无需管理员审批。社团负责人由管理员指定。' }}</p>
+{% if next_path.startswith('/recruitment/') %}<p class="alert">注册并登录后，会回到刚才的招新问卷。</p>{% endif %}
+<form method="post">
+  {{ csrf() }}<input type="hidden" name="next" value="{{ next_path }}">
+  <label>{{ '学号 / 账号' if mode=='login' else '学号' }}<input name="student_no" required maxlength="30" autocomplete="username"></label>
+  {% if mode=='register' %}
+    <label>姓名<input name="name" required maxlength="40" autocomplete="name"></label>
+    <div class="form-grid"><label>专业<input name="major" required maxlength="80"></label><label>年级<input name="grade" required maxlength="30" placeholder="如 2025 级"></label></div>
+    <label>联系方式<input name="phone" required maxlength="40"></label>
+  {% endif %}
+  <label>密码<input type="password" name="password" required minlength="{{ 8 if mode=='register' else 1 }}" maxlength="128" autocomplete="{{ 'new-password' if mode=='register' else 'current-password' }}"></label>
+  {% if mode=='register' %}<label>确认密码<input type="password" name="password_confirm" required minlength="8" maxlength="128" autocomplete="new-password"></label>{% endif %}
+  <button class="full">{{ '登录' if mode=='login' else '注册学生账号' }}</button>
+</form>
+<p class="muted">{% if mode=='login' %}还没有账号？<a href="{{ url_for('auth.register',next=next_path) }}">学生注册</a>{% else %}已有账号？<a href="{{ url_for('auth.login',next=next_path) }}">返回登录</a>{% endif %}</p>
+<a href="{{ url_for('recruitment.index') }}">先看看正在招新的社团 →</a>
+</section></div>
+{% endblock %}

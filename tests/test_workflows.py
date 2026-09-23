@@ -118,16 +118,18 @@ def test_database_foreign_keys(app):
     keys=query(app,"SELECT COUNT(*) n FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=%s",(app.config['MYSQL_DATABASE'],))
     assert keys['n']>=35
 
-def test_create_approve_activity_and_prevent_early_checkin(app):
+def test_owner_publishes_activity_and_prevents_early_checkin(app):
     c=login(app);now=datetime.now();fmt=lambda d:d.strftime('%Y-%m-%dT%H:%M')
     result=post(c,'/activities/new',dict(club_id=1,title='审批流程测试',description='测试活动',location='教室',capacity=3,
         starts_at=fmt(now+timedelta(days=2)),ends_at=fmt(now+timedelta(days=2,hours=1)),deadline=fmt(now+timedelta(days=1))))
     assert result.status_code==302
     aid=query(app,'SELECT max(id) id FROM activities')['id']
-    assert post(c,f'/activities/{aid}/state',{'action':'submit'}).status_code==302
-    assert post(c,f'/activities/{aid}/state',{'action':'approve'}).status_code==403
     admin=login(app,'admin','Admin123!')
-    assert post(admin,f'/activities/{aid}/state',{'action':'approve'}).status_code==302
+    assert post(admin,f'/activities/{aid}/state',{'action':'publish'}).status_code==403
+    assert post(admin,f'/activities/{aid}/state',{'action':'approve'}).status_code==403
+    assert post(c,f'/activities/{aid}/state',{'action':'publish'}).status_code==302
+    assert query(app,'SELECT status FROM activities WHERE id=%s',(aid,))['status']=='published'
+    assert query(app,'SELECT COUNT(*) n FROM activity_approvals WHERE activity_id=%s',(aid,))['n']==0
     assert post(c,f'/activities/{aid}/join',{'action':'join'}).status_code==302
     rid=query(app,'SELECT id FROM registrations WHERE activity_id=%s',(aid,))['id']
     assert post(c,f'/registrations/{rid}/checkin').status_code==400
@@ -153,3 +155,92 @@ def test_concurrent_registration_respects_capacity(app):
         results=list(pool.map(lambda c:post(c,f'/activities/{aid}/join',{'action':'join'}).status_code,clients))
     assert sorted(results)==[302,400]
     assert query(app,"SELECT count(*) n FROM registrations WHERE activity_id=%s AND status='registered'",(aid,))['n']==1
+
+
+def test_public_student_registration_returns_to_questionnaire(app):
+    client=app.test_client()
+    assert '学生注册' in client.get('/').get_data(as_text=True)
+    assert client.get('/recruitment').status_code==200
+    detail=client.get('/recruitment/1').get_data(as_text=True)
+    assert '/register?next=/recruitment/1' in detail
+    assert '已提交问卷' not in detail
+    payload=dict(student_no='test-new-student',name='注册测试',major='计算机',grade='2026',phone='示例联系方式',password='TestStudent123!',password_confirm='TestStudent123!',next='/recruitment/1',role='admin')
+    response=post(client,'/register',payload)
+    assert response.status_code==302 and response.location=='/login?next=/recruitment/1'
+    user=query(app,'SELECT id,role FROM users WHERE student_no=%s',(payload['student_no'],))
+    assert user['role']=='student'
+    assert query(app,'SELECT count(*) n FROM memberships WHERE user_id=%s',(user['id'],))['n']==0
+    response=post(client,'/login',dict(student_no=payload['student_no'],password=payload['password'],next='/recruitment/1'))
+    assert response.location=='/recruitment/1'
+    assert client.get(response.location).status_code==200
+    assert client.get('/recruitment/new?club_id=1').status_code==403
+    assert post(client,'/clubs/1/owner',{'owner_no':payload['student_no']}).status_code==403
+
+
+def test_registration_validation_and_redirect_safety(app):
+    client=app.test_client();client.get('/register')
+    payload=dict(student_no='test-invalid-student',name='注册验证',major='计算机',grade='2026',phone='示例联系方式',password='TestStudent123!',password_confirm='Different123!')
+    assert post(client,'/register',payload).status_code==400
+    assert not query(app,'SELECT id FROM users WHERE student_no=%s',(payload['student_no'],))
+    assert post(client,'/register',{**payload,'student_no':'2025001','password_confirm':payload['password']}).status_code==400
+    response=post(client,'/login',dict(student_no='2025001',password='Club123!',next='//external.example/steal'))
+    assert response.location=='/'
+
+
+def test_admin_has_oversight_without_recruitment_or_activity_control(app):
+    admin=login(app,'admin','Admin123!')
+    assert '社团总览' in admin.get('/').get_data(as_text=True)
+    for path in ['/reports?club_id=1','/finance?club_id=1','/finance/funds/1','/finance/transactions/1','/audit']:
+        assert admin.get(path).status_code==200,path
+    a=query(app,'SELECT id FROM applications WHERE user_id=4')['id']
+    assert admin.get(f'/applications/{a}').status_code==403
+    assert post(admin,f'/applications/{a}/review',{'decision':'accepted'}).status_code==403
+    assert admin.get('/recruitment/new?club_id=1').status_code==403
+    assert post(admin,'/recruitment/new',{'club_id':1}).status_code==403
+    assert post(admin,'/recruitment/1/close').status_code==403
+    assert post(admin,'/recruitment/1').status_code==403
+    assert query(app,'SELECT status FROM batches WHERE id=1')['status']=='published'
+    detail=admin.get('/recruitment/1').get_data(as_text=True)
+    assert '已提交问卷' not in detail and 'name="option_id"' not in detail
+    assert admin.get('/activities/new').status_code==403
+    assert admin.get('/activities/1/edit').status_code==403
+    assert post(admin,'/activities/1/state',{'action':'cancel'}).status_code==403
+    assert post(admin,'/activities/1/join',{'action':'join'}).status_code==403
+    assert post(admin,'/registrations/1/checkin').status_code==403
+    assert post(admin,'/activities/2/feedback').status_code==403
+    assert post(admin,'/clubs/1',{'action':'department','name':'不应创建'}).status_code==403
+    assert post(admin,'/members/1',dict(role='member',status='left')).status_code==403
+    assert post(admin,'/finance/funds',{'club_id':1}).status_code==403
+    assert post(admin,'/ai/generate',dict(kind='plan',activity_id=1,consent='on')).status_code==403
+
+
+def test_admin_owner_assignment_and_legacy_membership_do_not_bypass_roles(app):
+    admin=login(app,'admin','Admin123!')
+    with app.app_context():
+        cid=execute("INSERT INTO clubs(name,description) VALUES('权限测试社团','用于权限回归')")
+        execute("INSERT INTO memberships(club_id,user_id,role) VALUES(%s,1,'owner')",(cid,))
+        get_db().commit()
+    # Old installations may still contain an admin-as-owner membership.
+    assert admin.get(f'/recruitment/new?club_id={cid}').status_code==403
+    assert post(admin,f'/clubs/{cid}',dict(action='department',name='旧角色不能操作')).status_code==403
+    assert post(admin,f'/clubs/{cid}/owner',dict(owner_no='admin')).status_code==400
+    assert post(admin,f'/clubs/{cid}/owner',dict(owner_no='2025003')).status_code==302
+    owner=login(app,'2025003')
+    assert post(owner,f'/clubs/{cid}',dict(action='department',name='招新部')).status_code==302
+    assert owner.get(f'/recruitment/new?club_id={cid}').status_code==200
+    assert post(admin,'/clubs',dict(name='不可指定管理员',owner_no='admin')).status_code==400
+
+
+def test_owner_controls_recruitment_and_old_pending_activities(app):
+    owner=login(app)
+    fmt=lambda d:d.strftime('%Y-%m-%dT%H:%M')
+    response=post(owner,'/recruitment/new',dict(club_id=1,title='负责人自主招新',description='无需管理员审批',starts_at=fmt(datetime.now()-timedelta(hours=1)),ends_at=fmt(datetime.now()+timedelta(days=3)),departments=['1']))
+    assert response.status_code==302
+    bid=int(response.location.rsplit('/',1)[1])
+    assert query(app,'SELECT status FROM batches WHERE id=%s',(bid,))['status']=='published'
+    assert post(owner,f'/recruitment/{bid}/close').status_code==302
+    with app.app_context():
+        aid=execute("INSERT INTO activities(club_id,created_by,title,description,location,starts_at,ends_at,deadline,capacity,status) VALUES(1,2,'旧待审批活动','兼容现有数据','教室',%s,%s,%s,10,'pending')",(datetime.now()+timedelta(days=2),datetime.now()+timedelta(days=3),datetime.now()+timedelta(days=1)))
+        get_db().commit()
+    assert owner.get(f'/activities/{aid}/edit').status_code==200
+    assert post(owner,f'/activities/{aid}/state',dict(action='publish')).status_code==302

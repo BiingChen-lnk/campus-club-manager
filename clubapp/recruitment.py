@@ -1,22 +1,21 @@
 from flask import Blueprint, render_template, request, redirect, url_for, g, flash, abort
 from .db import rows, one, execute, get_db, audit, notify
-from .common import login_required, can_manage, manage_required, visible_clubs, field, moment, now, integer, ValidationError
+from .common import login_required, can_manage, manage_required, owned_clubs, field, moment, now, integer, ValidationError, is_admin
 
 bp=Blueprint('recruitment',__name__)
 SLOTS=['周一至周五晚上','周六上午','周六下午','周六晚上','周日上午','周日下午','周日晚上']
 
 @bp.get('/recruitment')
-@login_required
 def index():
     batches=rows('SELECT b.*,c.name club_name,(SELECT count(*) FROM applications a WHERE a.batch_id=b.id) total FROM batches b JOIN clubs c ON c.id=b.club_id ORDER BY b.id DESC')
     batches=[b for b in batches if b['status']!='draft' or can_manage(b['club_id'])]
-    mine=rows('SELECT a.*,b.title FROM applications a JOIN batches b ON b.id=a.batch_id WHERE a.user_id=%s ORDER BY a.id DESC',(g.user['id'],))
-    return render_template('recruitment.html',batches=batches,mine=mine,clubs=visible_clubs())
+    mine=rows('SELECT a.*,b.title FROM applications a JOIN batches b ON b.id=a.batch_id WHERE a.user_id=%s ORDER BY a.id DESC',(g.user['id'],)) if g.user else []
+    return render_template('recruitment.html',batches=batches,mine=mine,clubs=owned_clubs())
 
 @bp.route('/recruitment/new',methods=['GET','POST'])
 @login_required
 def new():
-    clubs=visible_clubs();cid=integer(request.values.get('club_id') or (clubs[0]['id'] if clubs else 0),0)
+    clubs=owned_clubs();cid=integer(request.values.get('club_id') or (clubs[0]['id'] if clubs else 0),0)
     if not cid:abort(403)
     manage_required(cid)
     if request.method=='POST':
@@ -34,11 +33,12 @@ def new():
     return render_template('batch_form.html',clubs=clubs,cid=cid,departments=rows('SELECT * FROM departments WHERE club_id=%s',(cid,)))
 
 @bp.route('/recruitment/<int:bid>',methods=['GET','POST'])
-@login_required
 def batch(bid):
     b=one('SELECT b.*,c.name club_name FROM batches b JOIN clubs c ON c.id=b.club_id WHERE b.id=%s',(bid,),True)
     if b['status']=='draft' and not can_manage(b['club_id']):abort(403)
     if request.method=='POST':
+        if not g.user:return redirect(url_for('auth.login',next=request.path))
+        if is_admin():abort(403)
         b=one('SELECT * FROM batches WHERE id=%s FOR UPDATE',(bid,),True)
         if b['status']!='published' or not b['starts_at']<=now()<=b['ends_at']:raise ValidationError('当前不在问卷填写时间内。')
         option=integer(request.form.get('option_id'))
@@ -58,7 +58,7 @@ def batch(bid):
         return redirect(url_for('recruitment.application',aid=aid))
     options=rows('SELECT o.id,d.name FROM batch_options o JOIN departments d ON d.id=o.department_id WHERE o.batch_id=%s',(bid,))
     apps=rows('SELECT a.*,d.name department_name FROM applications a JOIN batch_options o ON o.id=a.option_id JOIN departments d ON d.id=o.department_id WHERE a.batch_id=%s ORDER BY a.id DESC',(bid,)) if can_manage(b['club_id']) else []
-    mine=one('SELECT id FROM applications WHERE batch_id=%s AND user_id=%s',(bid,g.user['id']))
+    mine=one('SELECT id FROM applications WHERE batch_id=%s AND user_id=%s',(bid,g.user['id'])) if g.user else None
     return render_template('batch.html',batch=b,options=options,applications=apps,mine=mine,slots=SLOTS,open=b['status']=='published' and b['starts_at']<=now()<=b['ends_at'])
 
 @bp.post('/recruitment/<int:bid>/close')
@@ -69,6 +69,7 @@ def close(bid):
     return redirect(url_for('recruitment.batch',bid=bid))
 
 def get_application(aid):
+    if is_admin():abort(403)
     a=one('SELECT a.*,b.club_id,b.title batch_title,d.name department_name,o.department_id FROM applications a JOIN batches b ON b.id=a.batch_id JOIN batch_options o ON o.id=a.option_id JOIN departments d ON d.id=o.department_id WHERE a.id=%s',(aid,),True)
     if a['user_id']!=g.user['id'] and not can_manage(a['club_id']):abort(403)
     return a

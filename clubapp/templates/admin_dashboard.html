@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% block title %}社团总览{% endblock %}
+{% block content %}
+<div class="page-head"><div><span class="eyebrow">OVERVIEW</span><h1>社团总览</h1><p>查看各社团运行情况，统筹经费。招新录取和活动发布由社团负责人处理。</p></div><a class="button" href="{{ url_for('main.clubs') }}">社团建档与负责人</a></div>
+<div class="stats">
+  <article><span>社团数量</span><strong>{{ clubs|length }}</strong><small>已建档社团</small></article>
+  <article><span>在社学生人次</span><strong>{{ totals.members }}</strong><small>跨社团参与分别计数</small></article>
+  <article><span>待审批经费</span><strong>{{ totals.pending }}</strong><small>各社团待处理申请合计</small></article>
+  <article><span>招新申请</span><strong>{{ totals.applications }}</strong><small>已录取 {{ totals.accepted }} 人次</small></article>
+  <article><span>已发布及结束活动</span><strong>{{ totals.activities }}</strong><small>不包含草稿或已取消活动</small></article>
+  <article><span>收支结余</span><strong>¥ {{ (totals.income-totals.expense)|money }}</strong><small>收入 ¥ {{ totals.income|money }} / 支出 ¥ {{ totals.expense|money }}</small></article>
+</div>
+<section class="panel"><h2>各社团数据与经费</h2><div class="table-wrap"><table>
+<thead><tr><th>社团</th><th>在社学生</th><th>申请 / 录取</th><th>活动</th><th>收入</th><th>支出</th><th>待批经费</th><th>查看</th></tr></thead>
+<tbody>{% for c in clubs %}<tr><td>{{ c.name }}</td><td>{{ c.members }}</td><td>{{ c.applications }} / {{ c.accepted }}</td><td>{{ c.activities }}</td><td>¥ {{ c.income|money }}</td><td>¥ {{ c.expense|money }}</td><td>{{ c.pending }}</td><td><a href="{{ url_for('main.reports',club_id=c.id) }}">统计</a> · <a href="{{ url_for('finance.index',club_id=c.id) }}">经费</a></td></tr>{% else %}<tr><td colspan="8">尚未创建社团。</td></tr>{% endfor %}</tbody>
+</table></div></section>
+{% endblock %}

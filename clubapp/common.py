@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from functools import wraps
+import re
 from flask import g, request, redirect, url_for, abort
 from .db import one
 
@@ -46,15 +47,37 @@ def login_required(fn):
     @wraps(fn)
     def wrapped(*args, **kwargs):
         if not g.user:
-            return redirect(url_for('auth.login'))
+            return redirect(url_for('auth.login', next=request.path))
         return fn(*args, **kwargs)
     return wrapped
+
+
+def return_path(value):
+    """Keep questionnaire links across registration without accepting external redirects."""
+    value = value or '/'
+    return value if re.fullmatch(r'/(?:recruitment(?:/[1-9]\d*)?|activities(?:/[1-9]\d*)?|clubs|reports|finance|ai|notifications|audit|profile)?', value) else '/'
+
+
+def is_owner(club_id):
+    return bool(g.get('user') and g.user['role']!='admin' and one("SELECT id FROM memberships WHERE user_id=%s AND club_id=%s AND status='active' AND role='owner'", (g.user['id'], club_id)))
+
+
+def owner_required(club_id):
+    if not is_owner(club_id):
+        abort(403)
+
+
+def owned_clubs():
+    from .db import rows
+    if not g.get('user') or is_admin():
+        return []
+    return rows("SELECT c.* FROM clubs c JOIN memberships m ON m.club_id=c.id WHERE m.user_id=%s AND m.role='owner' AND m.status='active' ORDER BY c.id", (g.user['id'],))
 
 def is_admin():
     return bool(g.get('user') and g.user['role'] == 'admin')
 
 def can_manage(club_id):
-    return bool(g.get('user') and (is_admin() or one("SELECT id FROM memberships WHERE user_id=%s AND club_id=%s AND status='active' AND role='owner'", (g.user['id'],club_id))))
+    return is_owner(club_id)
 
 def manage_required(club_id):
     if not can_manage(club_id):
@@ -62,6 +85,11 @@ def manage_required(club_id):
 
 def admin_required():
     if not is_admin():
+        abort(403)
+
+
+def oversight_required(club_id):
+    if not (is_admin() or is_owner(club_id)):
         abort(403)
 
 def member(club_id):

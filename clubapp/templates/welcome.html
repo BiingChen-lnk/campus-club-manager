@@ -1,0 +1,20 @@
+{% extends 'base.html' %}
+{% block title %}校园社团{% endblock %}
+{% block content %}
+<div class="auth-layout">
+  <section class="auth-intro">
+    <span class="eyebrow">CAMPUS / COMMUNITY</span>
+    <h1>找到兴趣，<br>加入社团。</h1>
+    <p>看看有哪些社团正在招新，注册学生账号后即可填写问卷。</p>
+    <div class="actions"><a class="button" href="{{ url_for('auth.register') }}">学生注册</a><a class="button secondary" href="{{ url_for('auth.login') }}">已有账号，登录</a></div>
+  </section>
+  <section class="panel auth-card">
+    <h2>从这里开始</h2>
+    <p>1. 注册学生账号，填写基本资料。</p>
+    <p>2. 选择感兴趣的社团，提交招新问卷。</p>
+    <p>3. 等待社团负责人审核，查看录取结果。</p>
+    <a class="button full" href="{{ url_for('recruitment.index') }}">查看招新问卷 →</a>
+    <p class="muted">学生注册不需要管理员审批。招新与活动由各社团负责人安排。</p>
+  </section>
+</div>
+{% endblock %}

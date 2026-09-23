@@ -4,7 +4,7 @@ from datetime import date
 from flask import Blueprint, render_template, request, redirect, url_for, g, current_app, send_from_directory, flash
 from werkzeug.utils import secure_filename
 from .db import rows, one, execute, get_db, audit, notify
-from .common import login_required, manage_required, admin_required, visible_clubs, field, integer, cents, ValidationError
+from .common import login_required, oversight_required, owner_required, admin_required, visible_clubs, field, integer, cents, ValidationError
 
 bp=Blueprint('finance',__name__)
 
@@ -13,7 +13,7 @@ bp=Blueprint('finance',__name__)
 def index():
     clubs=visible_clubs();cid=integer(request.args.get('club_id') or (clubs[0]['id'] if clubs else 0),0)
     if not cid:return render_template('finance.html',clubs=clubs,club=None)
-    manage_required(cid)
+    oversight_required(cid)
     funds=rows('SELECT f.*,(SELECT SUM(quantity*unit_cents) FROM budget_items WHERE fund_id=f.id) total FROM fund_applications f WHERE club_id=%s ORDER BY f.id DESC',(cid,))
     tx=rows('SELECT t.*,(SELECT count(*) FROM receipts r WHERE r.transaction_id=t.id) receipts FROM transactions t WHERE club_id=%s ORDER BY happened_on DESC,id DESC',(cid,))
     return render_template('finance.html',clubs=clubs,club=one('SELECT * FROM clubs WHERE id=%s',(cid,),True),funds=funds,transactions=tx,
@@ -22,7 +22,7 @@ def index():
 @bp.post('/finance/funds')
 @login_required
 def create_fund():
-    cid=integer(request.form.get('club_id'));manage_required(cid)
+    cid=integer(request.form.get('club_id'));owner_required(cid)
     aid=request.form.get('activity_id') or None
     if aid and not one('SELECT id FROM activities WHERE id=%s AND club_id=%s',(aid,cid)):raise ValidationError('活动不属于该社团。')
     names=request.form.getlist('item_name');quantities=request.form.getlist('quantity');prices=request.form.getlist('unit_price')
@@ -42,7 +42,7 @@ def create_fund():
 @login_required
 def fund(fid):
     f=one('SELECT f.*,c.name club_name,u.name applicant FROM fund_applications f JOIN clubs c ON c.id=f.club_id JOIN users u ON u.id=f.applicant_id WHERE f.id=%s',(fid,),True)
-    manage_required(f['club_id'])
+    oversight_required(f['club_id'])
     if request.method=='POST':
         admin_required();locked=one('SELECT status FROM fund_applications WHERE id=%s FOR UPDATE',(fid,),True)
         if locked['status']!='pending':raise ValidationError('该经费申请已经审核过。')
@@ -58,7 +58,7 @@ def fund(fid):
 @bp.post('/finance/transactions')
 @login_required
 def create_transaction():
-    cid=integer(request.form.get('club_id'));manage_required(cid)
+    cid=integer(request.form.get('club_id'));oversight_required(cid)
     direction=field('direction');amount=cents(field('amount'));fid=request.form.get('fund_id') or None
     if direction not in ('income','expense'):raise ValidationError('收支类型不正确。')
     aid=request.form.get('activity_id') or None
@@ -85,7 +85,7 @@ def create_transaction():
 @bp.route('/finance/transactions/<int:tid>',methods=['GET','POST'])
 @login_required
 def transaction(tid):
-    t=one('SELECT * FROM transactions WHERE id=%s',(tid,),True);manage_required(t['club_id'])
+    t=one('SELECT * FROM transactions WHERE id=%s',(tid,),True);oversight_required(t['club_id'])
     if request.method=='POST':
         f=request.files.get('receipt')
         if not f or not f.filename:raise ValidationError('请选择凭证文件。')
@@ -106,5 +106,5 @@ def transaction(tid):
 @bp.get('/receipts/<int:rid>')
 @login_required
 def receipt(rid):
-    r=one('SELECT r.*,t.club_id FROM receipts r JOIN transactions t ON t.id=r.transaction_id WHERE r.id=%s',(rid,),True);manage_required(r['club_id'])
+    r=one('SELECT r.*,t.club_id FROM receipts r JOIN transactions t ON t.id=r.transaction_id WHERE r.id=%s',(rid,),True);oversight_required(r['club_id'])
     return send_from_directory(current_app.config['UPLOAD_FOLDER'],r['storage_name'],as_attachment=True,download_name=r['filename'])

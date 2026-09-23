@@ -2,13 +2,26 @@ import csv
 import io
 from flask import Blueprint, render_template, request, redirect, url_for, g, flash, Response
 from .db import rows, one, execute, get_db, audit
-from .common import login_required, is_admin, admin_required, can_manage, manage_required, visible_clubs, field, integer, ValidationError, now
+from .common import login_required, is_admin, admin_required, can_manage, manage_required, oversight_required, visible_clubs, field, integer, ValidationError, now
 
 bp=Blueprint('main',__name__)
 
 @bp.get('/')
-@login_required
 def dashboard():
+    if not g.user:
+        return render_template('welcome.html')
+    if is_admin():
+        overview=rows("""SELECT c.id,c.name,
+            (SELECT COUNT(*) FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.club_id=c.id AND m.status='active' AND u.role='student') members,
+            (SELECT COUNT(*) FROM applications a JOIN batches b ON b.id=a.batch_id WHERE b.club_id=c.id) applications,
+            (SELECT COUNT(*) FROM applications a JOIN batches b ON b.id=a.batch_id WHERE b.club_id=c.id AND a.status='accepted') accepted,
+            (SELECT COUNT(*) FROM activities a WHERE a.club_id=c.id AND a.status IN ('published','ended')) activities,
+            (SELECT COUNT(*) FROM fund_applications f WHERE f.club_id=c.id AND f.status='pending') pending,
+            (SELECT COALESCE(SUM(t.amount_cents),0) FROM transactions t WHERE t.club_id=c.id AND t.direction='income') income,
+            (SELECT COALESCE(SUM(t.amount_cents),0) FROM transactions t WHERE t.club_id=c.id AND t.direction='expense') expense
+            FROM clubs c ORDER BY c.id""")
+        totals={key:sum(c[key] for c in overview) for key in ('members','applications','accepted','activities','pending','income','expense')}
+        return render_template('admin_dashboard.html',clubs=overview,totals=totals)
     clubs=rows('SELECT c.*, (SELECT count(*) FROM memberships m WHERE m.club_id=c.id AND m.status=\'active\') members FROM clubs c')
     mine=rows('SELECT m.*,c.name FROM memberships m JOIN clubs c ON c.id=m.club_id WHERE m.user_id=%s',(g.user['id'],))
     activities=rows("SELECT a.*,c.name club_name FROM activities a JOIN clubs c ON c.id=a.club_id WHERE a.status='published' AND a.ends_at >= %s ORDER BY a.starts_at LIMIT 5",(now(),))
@@ -20,8 +33,8 @@ def dashboard():
 def clubs():
     if request.method=='POST':
         admin_required()
-        owner=one('SELECT id FROM users WHERE student_no=%s',(field('owner_no'),))
-        if not owner:raise ValidationError('负责人学号不存在，请先注册该用户。')
+        owner=one("SELECT id FROM users WHERE student_no=%s AND role='student'",(field('owner_no'),))
+        if not owner:raise ValidationError('请指定已注册的学生账号担任负责人。')
         cid=execute('INSERT INTO clubs(name,description) VALUES(%s,%s)',(field('name',80),field('description',4000,False)))
         execute("INSERT INTO memberships(club_id,user_id,role) VALUES(%s,%s,'owner')",(cid,owner['id']))
         audit('创建社团','club',cid,cid);get_db().commit();flash('社团已创建。','success')
@@ -43,7 +56,21 @@ def club(club_id):
         audit('维护社团','club',club_id,club_id,action);get_db().commit()
         return redirect(url_for('main.club',club_id=club_id))
     members=rows('SELECT m.*,u.name,u.student_no,d.name department_name FROM memberships m JOIN users u ON u.id=m.user_id LEFT JOIN departments d ON d.id=m.department_id WHERE m.club_id=%s ORDER BY m.status,m.id',(club_id,)) if can_manage(club_id) else []
-    return render_template('club.html',club=c,departments=rows('SELECT * FROM departments WHERE club_id=%s',(club_id,)),members=members)
+    owners=rows("SELECT u.name,u.student_no FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.club_id=%s AND m.status='active' AND m.role='owner' AND u.role='student'",(club_id,)) if is_admin() else []
+    return render_template('club.html',club=c,departments=rows('SELECT * FROM departments WHERE club_id=%s',(club_id,)),members=members,owners=owners)
+
+
+@bp.post('/clubs/<int:club_id>/owner')
+@login_required
+def assign_owner(club_id):
+    admin_required()
+    one('SELECT id FROM clubs WHERE id=%s FOR UPDATE',(club_id,),True)
+    owner=one("SELECT id FROM users WHERE student_no=%s AND role='student'",(field('owner_no'),))
+    if not owner:raise ValidationError('请指定已注册的学生账号担任负责人。')
+    execute("INSERT INTO memberships(club_id,user_id,role) VALUES(%s,%s,'owner') ON DUPLICATE KEY UPDATE role='owner',status='active'",(club_id,owner['id']))
+    audit('指定社团负责人','club',club_id,club_id)
+    get_db().commit();flash('已指定负责人。原有学生负责人的权限保留。','success')
+    return redirect(url_for('main.club',club_id=club_id))
 
 @bp.post('/members/<int:mid>')
 @login_required
@@ -77,7 +104,7 @@ def reports():
     clubs=visible_clubs()
     cid=integer(request.args.get('club_id') or (clubs[0]['id'] if clubs else 0),0)
     if not cid:return render_template('reports.html',clubs=clubs,club=None)
-    manage_required(cid);club=one('SELECT * FROM clubs WHERE id=%s',(cid,),True)
+    oversight_required(cid);club=one('SELECT * FROM clubs WHERE id=%s',(cid,),True)
     bid=request.args.get('batch_id','');start=request.args.get('start','');end=request.args.get('end','')
     args=[cid];where='b.club_id=%s'
     if bid:where+=' AND b.id=%s';args.append(integer(bid))
@@ -117,5 +144,5 @@ def logs():
     clubs=visible_clubs()
     cid=request.args.get('club_id') or (clubs[0]['id'] if clubs else None)
     if not cid:return render_template('logs.html',items=[],clubs=clubs)
-    manage_required(cid)
+    oversight_required(cid)
     return render_template('logs.html',clubs=clubs,items=rows('SELECT l.*,u.name actor FROM audit_logs l LEFT JOIN users u ON u.id=l.actor_id WHERE l.club_id=%s ORDER BY l.id DESC LIMIT 300',(cid,)))

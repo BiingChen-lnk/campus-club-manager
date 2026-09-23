@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from flask import Flask, session, request, g, render_template
 from .db import close_db, init_db, one, get_db
-from .common import ValidationError, can_manage, is_admin
+from .common import ValidationError, can_manage, is_admin, is_owner
 
 def create_app(config=None):
     load_dotenv(Path(__file__).resolve().parents[1]/'.env',encoding='utf-8-sig')
@@ -39,7 +39,7 @@ def create_app(config=None):
     @app.context_processor
     def context():
         unread=one('SELECT count(*) n FROM notifications WHERE recipient_id=%s AND read_at IS NULL',(g.user['id'],))['n'] if g.user else 0
-        return dict(can_manage=can_manage, is_admin=is_admin, unread=unread, csrf_token=lambda:session.get('csrf_token',''))
+        return dict(can_manage=can_manage, is_admin=is_admin, is_owner=is_owner, unread=unread, csrf_token=lambda:session.get('csrf_token',''))
 
     app.jinja_env.filters['money'] = lambda value: f'{(value or 0)/100:,.2f}'
     status_names={'draft':'草稿','pending':'待审核','published':'已发布','closed':'已关闭','accepted':'已录取',

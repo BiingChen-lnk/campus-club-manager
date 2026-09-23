@@ -16,7 +16,7 @@ def seed_demo():
     execute('INSERT INTO departments(club_id,name) VALUES(%s,%s)',(cid2,'摄影部'))
     execute("INSERT INTO memberships(club_id,user_id,department_id,role) VALUES(%s,%s,%s,'owner')",(cid,ids[1],deps[0]))
     execute("INSERT INTO memberships(club_id,user_id,department_id) VALUES(%s,%s,%s)",(cid,ids[2],deps[0]))
-    execute("INSERT INTO memberships(club_id,user_id,role) VALUES(%s,%s,'owner')",(cid2,ids[0]))
+    execute("INSERT INTO memberships(club_id,user_id,role) VALUES(%s,%s,'owner')",(cid2,ids[2]))
     now=datetime.now();fmt=lambda d:d.strftime('%Y-%m-%d %H:%M:%S')
     bid=execute("INSERT INTO batches(club_id,title,description,starts_at,ends_at,status,created_by) VALUES(%s,%s,%s,%s,%s,'published',%s)",
         (cid,'秋季招新 · 找到一起做项目的伙伴','不要求已有项目经验。填写你的兴趣、经历和空闲时间，一起从小项目开始。',fmt(now-timedelta(days=1)),fmt(now+timedelta(days=30)),ids[1]))

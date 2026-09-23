@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from flask import Blueprint, render_template, request, redirect, url_for, g, flash, abort
 from .db import rows, one, execute, get_db, audit, notify
-from .common import login_required, can_manage, manage_required, admin_required, visible_clubs, member, field, integer, moment, now, ValidationError
+from .common import login_required, can_manage, manage_required, owned_clubs, member, field, integer, moment, now, ValidationError, is_admin
 
 bp=Blueprint('activities',__name__)
 
@@ -9,17 +9,17 @@ bp=Blueprint('activities',__name__)
 @login_required
 def index():
     items=rows('SELECT a.*,c.name club_name,(SELECT count(*) FROM registrations r WHERE r.activity_id=a.id AND r.status=\'registered\') registered FROM activities a JOIN clubs c ON c.id=a.club_id ORDER BY a.id DESC')
-    return render_template('activities.html',items=[a for a in items if a['status'] in ('published','ended','cancelled') or can_manage(a['club_id'])],clubs=visible_clubs())
+    return render_template('activities.html',items=[a for a in items if a['status'] in ('published','ended','cancelled') or can_manage(a['club_id'])],clubs=owned_clubs())
 
 @bp.route('/activities/new',methods=['GET','POST'])
 @bp.route('/activities/<int:aid>/edit',methods=['GET','POST'])
 @login_required
 def edit(aid=None):
     a=one('SELECT * FROM activities WHERE id=%s',(aid,),True) if aid else None
-    clubs=visible_clubs()
+    clubs=owned_clubs()
     if a:manage_required(a['club_id'])
     if not clubs:abort(403)
-    if a and a['status'] not in ('draft','rejected','published'):raise ValidationError('当前状态不能修改活动。')
+    if a and a['status'] not in ('draft','pending','rejected','published'):raise ValidationError('当前状态不能修改活动。')
     if request.method=='POST':
         cid=a['club_id'] if a else integer(request.form.get('club_id'));manage_required(cid)
         start=moment('starts_at');end=moment('ends_at');deadline=moment('deadline')
@@ -27,9 +27,9 @@ def edit(aid=None):
         values=(field('title',120),field('description',10000),field('location',150),start,end,deadline,integer(request.form.get('capacity'),1,10000))
         if a:
             locked=one('SELECT status FROM activities WHERE id=%s FOR UPDATE',(aid,),True)
-            if locked['status'] not in ('draft','rejected','published'):
+            if locked['status'] not in ('draft','pending','rejected','published'):
                 raise ValidationError('活动状态已经改变，请刷新后重试。')
-            used=one("SELECT count(*) n FROM registrations WHERE activity_id=%s AND status='registered'",(aid,))['n']
+            used=len(rows("SELECT id FROM registrations WHERE activity_id=%s AND status='registered' FOR UPDATE",(aid,)))
             if values[-1]<used:raise ValidationError('人数上限不能小于已报名人数。')
             execute('UPDATE activities SET title=%s,description=%s,location=%s,starts_at=%s,ends_at=%s,deadline=%s,capacity=%s WHERE id=%s',values+(aid,))
             for r in rows("SELECT user_id FROM registrations WHERE activity_id=%s AND status='registered'",(aid,)):notify(r['user_id'],f'活动「{values[0]}」信息已更新，请查看新的时间与地点。')
@@ -61,11 +61,9 @@ def detail(aid):
 def state(aid):
     a=one('SELECT * FROM activities WHERE id=%s FOR UPDATE',(aid,),True);manage_required(a['club_id'])
     action=field('action')
-    if action=='submit' and a['status'] in ('draft','rejected'):status='pending'
-    elif action in ('approve','reject') and a['status']=='pending':
-        admin_required();status='published' if action=='approve' else 'rejected'
-        execute('INSERT INTO activity_approvals(activity_id,reviewer_id,decision,note) VALUES(%s,%s,%s,%s)',(aid,g.user['id'],'approved' if action=='approve' else 'rejected',field('note',2000,False)))
-        notify(a['created_by'],f'活动「{a["title"]}」审核结果：{"通过" if action=="approve" else "驳回"}。')
+    if action in ('publish','submit') and a['status'] in ('draft','pending','rejected'):
+        if now()>a['deadline']:raise ValidationError('报名截止时间已过，请修改活动时间后发布。')
+        status='published'
     elif action=='cancel' and a['status'] in ('draft','pending','published','rejected'):status='cancelled'
     elif action=='end' and a['status']=='published':
         if now()<a['starts_at']:raise ValidationError('活动尚未开始。')
@@ -80,14 +78,17 @@ def state(aid):
 @bp.post('/activities/<int:aid>/join')
 @login_required
 def join(aid):
+    if is_admin():abort(403)
     a=one('SELECT * FROM activities WHERE id=%s FOR UPDATE',(aid,),True)
     if not member(a['club_id']):raise ValidationError('请先加入该社团。')
     if a['status']!='published' or now()>a['deadline']:raise ValidationError('报名已截止或活动未发布。')
-    r=one('SELECT * FROM registrations WHERE activity_id=%s AND user_id=%s',(aid,g.user['id']))
+    r=one('SELECT * FROM registrations WHERE activity_id=%s AND user_id=%s FOR UPDATE',(aid,g.user['id']))
     action=field('action')
     if action=='join':
         if r and r['status']=='registered':raise ValidationError('你已经报名。')
-        count=one("SELECT count(*) n FROM registrations WHERE activity_id=%s AND status='registered'",(aid,))['n']
+        # Read the latest committed seats after locking the activity, not the earlier
+        # authentication query's repeatable-read snapshot.
+        count=len(rows("SELECT id FROM registrations WHERE activity_id=%s AND status='registered' FOR UPDATE",(aid,)))
         if count>=a['capacity']:raise ValidationError('报名人数已满。')
         execute("INSERT INTO registrations(activity_id,user_id) VALUES(%s,%s) ON DUPLICATE KEY UPDATE status='registered',checked_at=NULL",(aid,g.user['id']))
     elif action=='cancel':
@@ -100,6 +101,7 @@ def join(aid):
 @bp.post('/registrations/<int:rid>/checkin')
 @login_required
 def checkin(rid):
+    if is_admin():abort(403)
     r=one('SELECT r.*,a.club_id,a.status activity_status,a.starts_at,a.ends_at FROM registrations r JOIN activities a ON a.id=r.activity_id WHERE r.id=%s FOR UPDATE',(rid,),True)
     if r['user_id']!=g.user['id'] and not can_manage(r['club_id']):abort(403)
     start=datetime.strptime(r['starts_at'],'%Y-%m-%d %H:%M:%S')-timedelta(minutes=30)
@@ -112,6 +114,7 @@ def checkin(rid):
 @bp.post('/activities/<int:aid>/feedback')
 @login_required
 def feedback(aid):
+    if is_admin():abort(403)
     a=get_activity(aid)
     r=one("SELECT * FROM registrations WHERE activity_id=%s AND user_id=%s AND status='registered' AND checked_at IS NOT NULL",(aid,g.user['id']))
     if a['status']!='ended' or not r:raise ValidationError('活动结束后，已签到的成员才能提交反馈。')
