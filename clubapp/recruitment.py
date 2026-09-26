@@ -1,7 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, g, flash, abort
 from .db import rows, one, execute, get_db, audit, notify
-from .common import login_required, can_manage, manage_required, owned_clubs, field, moment, now, integer, ValidationError, is_admin
-from .custom import is_custom, questions_for_batch, validate_answers, answers_for_application
+from .common import login_required, can_manage, manage_required, owned_clubs, field, now, integer, ValidationError, is_admin
+from .custom import is_custom, questions_for_batch, validate_answers, answers_for_application, batch_settings_from_form
 
 bp=Blueprint('recruitment',__name__)
 SLOTS=['周一至周五晚上','周六上午','周六下午','周六晚上','周日上午','周日下午','周日晚上']
@@ -20,16 +20,11 @@ def new():
     if not cid:abort(403)
     manage_required(cid)
     if request.method=='POST':
-        starts=moment('starts_at');ends=moment('ends_at')
-        if starts>=ends:raise ValidationError('招新结束时间应晚于开始时间。')
-        departments=set(request.form.getlist('departments'))
-        if not departments:raise ValidationError('至少选择一个开放部门。')
-        for dep in departments:
-            if not one('SELECT id FROM departments WHERE id=%s AND club_id=%s',(dep,cid)):raise ValidationError('部门不属于该社团。')
+        title, description, starts, ends, departments=batch_settings_from_form(cid)
         bid=execute("INSERT INTO batches(club_id,title,description,starts_at,ends_at,status,created_by) VALUES(%s,%s,%s,%s,%s,'draft',%s)",
-                    (cid,field('title',120),field('description',5000,False),starts,ends,g.user['id']))
+                    (cid,title,description,starts,ends,g.user['id']))
         execute('INSERT INTO batch_questionnaires(batch_id) VALUES(%s)',(bid,))
-        for dep in departments:execute('INSERT INTO batch_options(batch_id,department_id) VALUES(%s,%s)',(bid,dep))
+        for dep in sorted(departments):execute('INSERT INTO batch_options(batch_id,department_id) VALUES(%s,%s)',(bid,dep))
         audit('创建招新问卷草稿','batch',bid,cid);get_db().commit()
         return redirect(url_for('custom.editor',bid=bid))
     return render_template('batch_form.html',clubs=clubs,cid=cid,departments=rows('SELECT * FROM departments WHERE club_id=%s',(cid,)))

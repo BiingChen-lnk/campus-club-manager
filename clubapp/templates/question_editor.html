@@ -1,6 +1,6 @@
 {% extends 'base.html' %}{% block title %}编辑招新问卷{% endblock %}
 {% block content %}
-<div class="page-head"><div><span class="eyebrow">{{ batch.club_name }}</span><h1>编辑招新问卷</h1><p>{{ batch.title }} · {{ batch.status|status }}</p></div><a class="button secondary" href="{{ url_for('recruitment.batch',bid=batch.id) }}">预览问卷 →</a></div>
+<div class="page-head"><div><span class="eyebrow">{{ batch.club_name }}</span><h1>编辑招新问卷</h1><p>{{ batch.title }} · {{ batch.status|status }}</p></div><div class="actions">{% if batch.status=='draft' %}<a class="button secondary" href="{{ url_for('custom.settings',bid=batch.id) }}">修改基本信息</a>{% endif %}<a class="button secondary" href="{{ url_for('recruitment.batch',bid=batch.id) }}">预览问卷 →</a></div></div>
 <section class="panel"><p>姓名、学号等基本资料会从学生账号带入；选择意向部门后填写下列自定义题目。最多 30 题，每道选择题最多 30 个选项。</p><p>发布后题目和选项会锁定，已提交的答卷仍按发布时的题目显示。</p>
 {% if batch.status=='draft' %}<form method="post" action="{{ url_for('custom.publish',bid=batch.id) }}">{{ csrf() }}<button {{ 'disabled' if not questions }}>发布问卷</button>{% if not questions %}<small>请先添加至少一道题。</small>{% endif %}</form>{% else %}<a href="{{ url_for('custom.results',bid=batch.id) }}">查看答卷统计与导出 →</a>{% endif %}</section>
 {% for q in questions %}

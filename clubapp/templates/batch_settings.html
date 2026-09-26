@@ -1,0 +1,11 @@
+{% extends 'base.html' %}{% block title %}修改招新问卷基本信息{% endblock %}
+{% block content %}
+<div class="page-head"><div><span class="eyebrow">{{ batch.club_name }}</span><h1>修改问卷基本信息</h1><p>{{ batch.title }} · 草稿</p></div><a class="button secondary" href="{{ url_for('custom.editor',bid=batch.id) }}">返回题目编辑 →</a></div>
+<section class="panel narrow"><p class="muted">标题、说明、招新时间和开放部门在发布前可以修改；发布后会锁定。</p>
+<form method="post">{{ csrf() }}
+<label>招新标题<input name="title" value="{{ batch.title }}" required maxlength="120"></label>
+<label>招新说明<textarea name="description" maxlength="5000">{{ batch.description }}</textarea></label>
+<div class="form-grid"><label>开始时间<input type="datetime-local" name="starts_at" value="{{ batch.starts_at[:16].replace(' ','T') }}" required></label><label>结束时间<input type="datetime-local" name="ends_at" value="{{ batch.ends_at[:16].replace(' ','T') }}" required></label></div>
+<h3>开放部门</h3><div class="choices">{% for d in departments %}<label><input type="checkbox" name="departments" value="{{ d.id }}" {{ 'checked' if d.id in selected }}>{{ d.name }}</label>{% endfor %}</div>
+<button>保存基本信息</button></form></section>
+{% endblock %}

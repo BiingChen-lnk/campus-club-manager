@@ -5,7 +5,7 @@ import json
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from flask import Blueprint, Response, abort, g, redirect, render_template, request, url_for
-from .common import login_required, manage_required, field, integer, now, ValidationError
+from .common import login_required, manage_required, field, integer, moment, now, ValidationError
 from .db import one, rows, execute, get_db, audit
 
 bp = Blueprint('custom', __name__)
@@ -16,6 +16,22 @@ KINDS = {
 CHOICES = {'single', 'multiple', 'select'}
 MAX_QUESTIONS = 30
 MAX_OPTIONS = 30
+
+
+def batch_settings_from_form(club_id):
+    title = field('title', 120)
+    description = field('description', 5000, False)
+    starts_at = moment('starts_at')
+    ends_at = moment('ends_at')
+    if starts_at >= ends_at:
+        raise ValidationError('招新结束时间应晚于开始时间。')
+    departments = {integer(value) for value in request.form.getlist('departments')}
+    if not departments:
+        raise ValidationError('至少选择一个开放部门。')
+    for department_id in departments:
+        if not one('SELECT id FROM departments WHERE id=%s AND club_id=%s', (department_id, club_id)):
+            raise ValidationError('部门不属于该社团。')
+    return title, description, starts_at, ends_at, departments
 
 
 def is_custom(bid):
@@ -105,8 +121,34 @@ def draft_for_edit(bid):
     manage_required(batch['club_id'])
     locked = one('SELECT status FROM batches WHERE id=%s FOR UPDATE', (bid,), True)
     if locked['status'] != 'draft':
-        raise ValidationError('问卷发布后不能修改题目或选项，以免历史答卷失去对应关系。')
+        raise ValidationError('问卷发布后不能修改基本信息、题目或选项，以免历史答卷失去对应关系。')
     return batch
+
+
+@bp.route('/recruitment/<int:bid>/settings', methods=['GET', 'POST'])
+@login_required
+def settings(bid):
+    if request.method == 'POST':
+        batch = draft_for_edit(bid)
+        title, description, starts_at, ends_at, departments = batch_settings_from_form(batch['club_id'])
+        if one('SELECT id FROM applications WHERE batch_id=%s LIMIT 1', (bid,)):
+            raise ValidationError('已有答卷的问卷不能修改开放部门。')
+        execute('UPDATE batches SET title=%s,description=%s,starts_at=%s,ends_at=%s WHERE id=%s',
+                (title, description, starts_at, ends_at, bid))
+        execute('DELETE FROM batch_options WHERE batch_id=%s', (bid,))
+        for department_id in sorted(departments):
+            execute('INSERT INTO batch_options(batch_id,department_id) VALUES(%s,%s)', (bid, department_id))
+        audit('修改招新问卷基本信息', 'batch', bid, batch['club_id'])
+        get_db().commit()
+        return redirect(url_for('custom.editor', bid=bid))
+    batch = get_custom_batch(bid)
+    manage_required(batch['club_id'])
+    if batch['status'] != 'draft':
+        raise ValidationError('问卷发布后不能修改基本信息。')
+    selected = {item['department_id'] for item in rows(
+        'SELECT department_id FROM batch_options WHERE batch_id=%s', (bid,))}
+    return render_template('batch_settings.html', batch=batch, selected=selected,
+                           departments=rows('SELECT * FROM departments WHERE club_id=%s ORDER BY id', (batch['club_id'],)))
 
 
 @bp.get('/recruitment/<int:bid>/questions')

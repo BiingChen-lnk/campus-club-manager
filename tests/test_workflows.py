@@ -381,3 +381,40 @@ def test_optional_select_can_be_left_unanswered(app):
     assert post(applicant,f'/recruitment/{bid}',{**payload,f'q_{qid}':''}).status_code==302
     answer=query(app,'SELECT qa.answer_text FROM questionnaire_answers qa JOIN applications a ON a.id=qa.application_id WHERE a.batch_id=%s AND qa.question_id=%s',(bid,qid))
     assert answer['answer_text']=='[]'
+
+
+def test_owner_can_edit_draft_questionnaire_settings_only_before_publish(app):
+    owner=login(app)
+    fmt=lambda d:d.strftime('%Y-%m-%dT%H:%M')
+    start=fmt(datetime.now()+timedelta(hours=1))
+    end=fmt(datetime.now()+timedelta(days=2))
+    created=post(owner,'/recruitment/new',dict(club_id=1,title='旧标题',description='旧说明',
+        starts_at=start,ends_at=end,departments=['1','2']))
+    assert created.status_code==302
+    bid=int(created.location.split('/')[2])
+    settings=f'/recruitment/{bid}/settings'
+    page=owner.get(settings).get_data(as_text=True)
+    assert '旧标题' in page and '旧说明' in page and '修改问卷基本信息' in page
+    assert owner.get('/recruitment/1/settings').status_code==404
+    admin=login(app,'admin','Admin123!')
+    student=login(app,'2025003')
+    assert admin.get(settings).status_code==403
+    assert student.get(settings).status_code==403
+    changed=dict(title='新标题',description='新说明',starts_at=fmt(datetime.now()+timedelta(hours=2)),
+        ends_at=fmt(datetime.now()+timedelta(days=4)),departments=['2'])
+    assert post(owner,settings,{**changed,'departments':[]}).status_code==400
+    assert post(owner,settings,{**changed,'departments':['4']}).status_code==400
+    assert post(owner,settings,{**changed,'ends_at':start}).status_code==400
+    assert post(owner,settings,changed).status_code==302
+    updated=query(app,'SELECT title,description,starts_at,ends_at FROM batches WHERE id=%s',(bid,))
+    assert updated['title']=='新标题' and updated['description']=='新说明'
+    assert updated['starts_at'].startswith(changed['starts_at'].replace('T',' '))
+    assert updated['ends_at'].startswith(changed['ends_at'].replace('T',' '))
+    assert query(app,'SELECT COUNT(*) n FROM batch_options WHERE batch_id=%s',(bid,))['n']==1
+    assert query(app,'SELECT department_id FROM batch_options WHERE batch_id=%s',(bid,))['department_id']==2
+    assert '新标题' in owner.get(f'/recruitment/{bid}').get_data(as_text=True)
+    assert post(owner,f'/recruitment/{bid}/questions/0',dict(kind='short',title='加入原因')).status_code==302
+    assert post(owner,f'/recruitment/{bid}/publish').status_code==302
+    assert owner.get(settings).status_code==400
+    assert post(owner,settings,changed).status_code==400
+    assert query(app,'SELECT title FROM batches WHERE id=%s',(bid,))['title']=='新标题'
