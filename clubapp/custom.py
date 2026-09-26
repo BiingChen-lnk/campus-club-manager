@@ -63,6 +63,8 @@ def validate_answers(questions):
         key = f"q_{question['id']}"
         if question['kind'] in CHOICES:
             values = request.form.getlist(key)
+            if question['kind'] == 'select' and values == ['']:
+                values = []
             if len(values) > MAX_OPTIONS or len(values) != len(set(values)):
                 raise ValidationError('选项数量或内容不正确。')
             allowed = {str(option['id']) for option in question['options']}

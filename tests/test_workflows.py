@@ -340,10 +340,21 @@ def test_custom_questionnaire_build_publish_answer_and_export(app):
 def test_custom_questionnaire_ai_uses_saved_answers(app,monkeypatch):
     import clubapp.ai as module
     from clubapp.custom import answers_for_application
-    aid=query(app,"SELECT a.id,a.batch_id FROM applications a JOIN batch_questionnaires q ON q.batch_id=a.batch_id ORDER BY a.id DESC LIMIT 1")
-    assert aid
+    owner=login(app)
+    fmt=lambda d:d.strftime('%Y-%m-%dT%H:%M')
+    created=post(owner,'/recruitment/new',dict(club_id=1,title='AI 问卷测试',
+        starts_at=fmt(datetime.now()-timedelta(hours=1)),ends_at=fmt(datetime.now()+timedelta(days=2)),departments=['1']))
+    bid=int(created.location.split('/')[2])
+    assert post(owner,f'/recruitment/{bid}/questions/0',dict(kind='long',title='项目经历',required='on')).status_code==302
+    qid=query(app,'SELECT id FROM questionnaire_questions WHERE batch_id=%s',(bid,))['id']
+    assert post(owner,f'/recruitment/{bid}/publish').status_code==302
+    option=query(app,'SELECT id FROM batch_options WHERE batch_id=%s',(bid,))['id']
+    applicant=login(app,'2025003')
+    submitted=post(applicant,f'/recruitment/{bid}',dict(option_id=str(option),name='申请学生',major='计算机',grade='2025',phone='123',
+        **{f'q_{qid}':'使用 Python 完成课程项目'}))
+    aid=int(submitted.location.rsplit('/',1)[1])
     with app.app_context():
-        answers=answers_for_application(aid['id'],aid['batch_id'])
+        answers=answers_for_application(aid,bid)
     assert any(q['answer']=='使用 Python 完成课程项目' for q in answers)
     monkeypatch.setattr(module,'configured',lambda:True)
     def fake_model(kind,data):
@@ -351,6 +362,22 @@ def test_custom_questionnaire_ai_uses_saved_answers(app,monkeypatch):
         assert 'student_no' not in data and 'phone' not in data
         return '{"summary":"有项目经验","skills":[{"name":"Python","evidence":"使用 Python 完成课程项目"}]}'
     monkeypatch.setattr(module,'ask_model',fake_model)
+    assert post(applicant,'/ai/generate',dict(kind='recruit',application_id=aid,consent='on')).status_code==302
+    assert query(app,"SELECT COUNT(*) n FROM ai_records WHERE application_id=%s AND status='success'",(aid,))['n']==1
+
+
+def test_optional_select_can_be_left_unanswered(app):
+    owner=login(app)
+    fmt=lambda d:d.strftime('%Y-%m-%dT%H:%M')
+    response=post(owner,'/recruitment/new',dict(club_id=1,title='选填下拉题测试',
+        starts_at=fmt(datetime.now()-timedelta(hours=1)),ends_at=fmt(datetime.now()+timedelta(days=2)),departments=['1']))
+    bid=int(response.location.split('/')[2])
+    assert post(owner,f'/recruitment/{bid}/questions/0',dict(kind='select',title='偏好的工作方向',options='开发\n设计')).status_code==302
+    qid=query(app,'SELECT id FROM questionnaire_questions WHERE batch_id=%s',(bid,))['id']
+    assert post(owner,f'/recruitment/{bid}/publish').status_code==302
+    option=query(app,'SELECT id FROM batch_options WHERE batch_id=%s',(bid,))['id']
     applicant=login(app,'2025003')
-    assert post(applicant,'/ai/generate',dict(kind='recruit',application_id=aid['id'],consent='on')).status_code==302
-    assert query(app,"SELECT COUNT(*) n FROM ai_records WHERE application_id=%s AND status='success'",(aid['id'],))['n']==1
+    payload=dict(option_id=str(option),name='申请学生',major='计算机',grade='2025',phone='123')
+    assert post(applicant,f'/recruitment/{bid}',{**payload,f'q_{qid}':''}).status_code==302
+    answer=query(app,'SELECT qa.answer_text FROM questionnaire_answers qa JOIN applications a ON a.id=qa.application_id WHERE a.batch_id=%s AND qa.question_id=%s',(bid,qid))
+    assert answer['answer_text']=='[]'
